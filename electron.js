@@ -4,10 +4,7 @@ const path = require('node:path'); // Use node:path for clarity
 const fsSync = require('node:fs'); // Use SYNCHRONOUS fs for initial setup
 const fs = require('node:fs').promises; // Use promises version of fs
 const crypto = require('node:crypto');
-// const electronIsDevRequire = require('electron-is-dev'); // <-- REMOVED standard require
-// const { JSONFile, Low } = require('lowdb'); // Keep lowdb v7 commented out
-const low = require('lowdb'); // <--- Use require for lowdb v1
-const FileSync = require('lowdb/adapters/FileSync'); // <--- Adapter for lowdb v1
+const { JSONFile, Low } = require('lowdb');
 const { GoogleGenerativeAI } = require('@google/generative-ai'); // Added for Gemini
 
 // --- Add this console log right at the beginning ---
@@ -34,7 +31,7 @@ const electronIsDevPromise = import('electron-is-dev')
 let db;
 const dbPath = path.join(app.getPath('userData'), 'db.json'); // Define dbPath early for error messages
 
-function initializeDatabase() {
+async function initializeDatabase() {
     try {
         const userDataPath = app.getPath('userData');
         console.log(`Ensuring directory exists: ${userDataPath}`);
@@ -42,11 +39,13 @@ function initializeDatabase() {
         fsSync.mkdirSync(userDataPath, { recursive: true });
 
         console.log(`Database path: ${dbPath}`);
-        const adapter = new FileSync(dbPath); // Use FileSync adapter for v1
-        db = low(adapter); // Initialize lowdb v1
+        const adapter = new JSONFile(dbPath); // Use JSONFile adapter for v7
+        db = new Low(adapter, { images: [] }); // Initialize lowdb v7 with default data
 
         // Set default data if file doesn't exist or is empty
-        db.defaults({ images: [] }).write(); // Use v1 defaults syntax
+        await db.read();
+        db.data = db.data || { images: [] }; // Set default data if file is empty
+        await db.write();
         console.log("Database initialized successfully at:", dbPath);
         return true; // Indicate success
     } catch (error) {
@@ -236,8 +235,8 @@ ipcMain.handle('read-file-as-blob', async (event, filePath) => {
 ipcMain.handle('load-images', async () => { // Keep async for potential future async operations
     try {
          if (!db) throw new Error("Database not initialized");
-        // For lowdb v1, data is typically read synchronously at init or via db.read() explicitly if needed
-        const images = db.get('images').value(); // Use v1 .get().value() syntax
+        await db.read();
+        const images = db.data.images;
         console.log("Sending images to frontend:", images ? images.length : 0);
         return { success: true, images: images || [] }; // Ensure images is always an array
     } catch (error) {
@@ -263,12 +262,8 @@ ipcMain.handle('add-images', async (event) => {
 
      console.log("Selected file paths:", result.filePaths);
 
-     const imagesCollection = db.get('images'); // Get collection reference v1
-     if (!imagesCollection.value()) { // Ensure collection exists if db was empty
-        db.set('images', []).write();
-        imagesCollection = db.get('images');
-     }
-     const existingPaths = new Set(imagesCollection.map('path').value()); // Use v1 map/value syntax
+     await db.read();
+     const existingPaths = new Set(db.data.images.map(image => image.path));
      const newImages = [];
 
      for (const filePath of result.filePaths) {
@@ -279,8 +274,7 @@ ipcMain.handle('add-images', async (event) => {
            description: '',
            last_updated: new Date().toISOString(),
          };
-         // Use push().write() for lowdb v1 to add and save
-         imagesCollection.push(newImage).write();
+         db.data.images.push(newImage);
          newImages.push(newImage); // Collect only the newly added ones
           existingPaths.add(filePath); // Add to set to prevent duplicate additions in the same batch
          console.log(`Added new image: ${filePath}`);
@@ -288,7 +282,7 @@ ipcMain.handle('add-images', async (event) => {
          console.log(`Skipped existing image: ${filePath}`);
        }
      }
-     // write() was called inside the loop for v1
+     await db.write();
 
      console.log(`Processed ${result.filePaths.length} files, added ${newImages.length} new images.`);
      return { success: true, newImages: newImages };
@@ -303,13 +297,14 @@ ipcMain.handle('add-images', async (event) => {
 ipcMain.handle('save-description', async (event, { id, description }) => { // Keep async
     try {
         if (!db) throw new Error("Database not initialized");
-        const imageChain = db.get('images').find({ id: id }); // Use v1 find syntax
-        const image = imageChain.value();
+        await db.read();
+        const image = db.data.images.find(img => img.id === id);
 
         if (image) {
             if (image.description !== description) { // Only write if changed
-                 // Use assign().write() for lowdb v1 update
-                 imageChain.assign({ description: description, last_updated: new Date().toISOString() }).write();
+                image.description = description;
+                image.last_updated = new Date().toISOString();
+                await db.write();
                  console.log(`Saved description for image ID ${id}`);
             } else {
                  console.log(`Description for image ID ${id} unchanged, skipped write.`);
@@ -329,10 +324,12 @@ ipcMain.handle('save-description', async (event, { id, description }) => { // Ke
 ipcMain.handle('remove-image', async (event, imageId) => { // Keep async
     try {
         if (!db) throw new Error("Database not initialized");
-        // Use remove().write() for lowdb v1
-        const result = db.get('images').remove({ id: imageId }).write();
+        await db.read();
+        const initialLength = db.data.images.length;
+        db.data.images = db.data.images.filter(img => img.id !== imageId);
 
-         if (result && result.length > 0) { // remove returns the removed items in v1
+         if (db.data.images.length < initialLength) {
+             await db.write();
              console.log(`Removed image ID ${imageId} from DB.`);
              return { success: true };
          } else {
