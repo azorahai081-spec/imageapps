@@ -1,6 +1,7 @@
 // electron.js - Main Process
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('node:path'); // Use node:path for clarity
+const fsSync = require('node:fs'); // Use SYNCHRONOUS fs for initial setup
 const fs = require('node:fs').promises; // Use promises version of fs
 const crypto = require('node:crypto');
 // const electronIsDevRequire = require('electron-is-dev'); // <-- REMOVED standard require
@@ -28,62 +29,40 @@ const electronIsDevPromise = import('electron-is-dev')
     });
 // --- End dynamic import ---
 
-
 // --- Database Setup ---
-// Determine the path for the db.json file
-// Use app.getPath('userData') which is designed for this purpose
-const dbPath = path.join(app.getPath('userData'), 'db.json');
-console.log(`Database path: ${dbPath}`); // Log the determined path
-
-// Configure lowdb v1 adapter
+// Declare db variable here, but initialize it inside whenReady
 let db;
-try {
-    // Ensure the directory exists before creating the adapter
-    fs.mkdir(app.getPath('userData'), { recursive: true })
-      .then(() => {
+const dbPath = path.join(app.getPath('userData'), 'db.json'); // Define dbPath early for error messages
+
+function initializeDatabase() {
+    try {
+        const userDataPath = app.getPath('userData');
+        console.log(`Ensuring directory exists: ${userDataPath}`);
+        // Use synchronous mkdir before initializing adapter
+        fsSync.mkdirSync(userDataPath, { recursive: true });
+
+        console.log(`Database path: ${dbPath}`);
         const adapter = new FileSync(dbPath); // Use FileSync adapter for v1
         db = low(adapter); // Initialize lowdb v1
 
         // Set default data if file doesn't exist or is empty
         db.defaults({ images: [] }).write(); // Use v1 defaults syntax
         console.log("Database initialized successfully at:", dbPath);
-      })
-      .catch(initError => {
-        console.error("Failed to initialize database directory or file:", initError);
-        handleDBInitializationError(initError);
-      });
-
-} catch (error) { // Catch synchronous errors during setup (less likely now)
-     console.error("Synchronous error during database setup:", error);
-     handleDBInitializationError(error);
+        return true; // Indicate success
+    } catch (error) {
+        console.error("Failed to initialize database:", error);
+        handleDBInitializationError(error);
+        return false; // Indicate failure
+    }
 }
 
 function handleDBInitializationError(error) {
      console.error("Database initialization failed:", error);
      try {
-         // Check if app is ready before using dialog
-         if (app.isReady()) {
-            dialog.showErrorBox("Database Error", `Failed to initialize the database at ${dbPath}. Please check permissions or delete the file if corrupted. Error: ${error.message}`);
-         } else {
-             // If app isn't ready, log to console as dialog might fail
-             console.error("App not ready, cannot show dialog for DB error. DB Path:", dbPath, "Error:", error.message);
-             // Attempt to show error later when app is ready
-              app.on('ready', () => {
-                 try {
-                    dialog.showErrorBox("Database Error (Delayed)", `Failed to initialize the database at ${dbPath}. Please check permissions or delete the file if corrupted. Error: ${error.message}`);
-                 } catch (lateDialogError) {
-                     console.error("Failed to show delayed database error dialog:", lateDialogError);
-                 }
-                app.quit(); // Quit after showing the delayed dialog
-             });
-
-         }
+        // We know app is ready if we are inside whenReady().then()
+        dialog.showErrorBox("Database Error", `Failed to initialize the database at ${dbPath}. Please check permissions or delete the file if corrupted. Error: ${error.message}`);
      } catch (dialogError) {
          console.error("Failed to show database error dialog:", dialogError);
-     }
-      // Don't quit immediately if app isn't ready, let the 'ready' event handle it
-     if (app.isReady()) {
-         app.quit();
      }
      db = null; // Ensure db is null if failed
 }
@@ -187,9 +166,13 @@ app.whenReady().then(async () => { // Make async
     console.log("--- App is ready ---");
     // --- End of added log ---
 
-     if (!db) { // Check if DB initialization failed earlier
-         console.error("Database failed to initialize. Exiting.");
+    // *** MOVED DATABASE INITIALIZATION HERE ***
+    const dbInitialized = initializeDatabase();
+
+     if (!dbInitialized || !db) { // Check if DB initialization failed
+         console.error("Database failed to initialize during app ready. Exiting.");
          // Give user a chance to see console before quitting in dev
+         await electronIsDevPromise; // Make sure we know if it's dev mode
          if (electronIsDev) {
              console.log("Exiting in 5 seconds due to DB init failure...");
              await new Promise(resolve => setTimeout(resolve, 5000));
@@ -197,14 +180,21 @@ app.whenReady().then(async () => { // Make async
          app.quit();
          return;
      }
+     // *** END OF MOVED CODE ***
 
-    await createWindow(); // Await the async function
+    await createWindow(); // Now safe to create window
 
     app.on('activate', async () => { // Make async
         // --- Add this console log ---
         console.log("--- App activated ---");
         // --- End of added log ---
+        // On macOS it's common to re-create a window in the app when the
+        // dock icon is clicked and there are no other windows open.
         if (BrowserWindow.getAllWindows().length === 0) {
+            if (!db) { // Double check DB just in case
+                console.error("DB not ready on activate, cannot create window.");
+                return;
+            }
             await createWindow(); // Await the async function
         }
     });
@@ -214,6 +204,7 @@ app.on('window-all-closed', () => {
    // --- Add this console log ---
    console.log("--- All windows closed ---");
    // --- End of added log ---
+  // Quit when all windows are closed, except on macOS.
   if (process.platform !== 'darwin') {
     app.quit();
   }
