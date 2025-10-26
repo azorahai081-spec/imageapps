@@ -1,0 +1,68 @@
+{
+  "name": "ai-image-tagger",
+  "version": "0.1.0",
+  "private": true,
+  "main": "electron.js",
+  "homepage": ".",
+  "dependencies": {
+    "@google/generative-ai": "^0.16.0",
+    "@tailwindcss/forms": "^0.5.7",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron-is-dev": "^3.0.1",
+    "lowdb": "^7.0.1",
+    "lucide-react": "^0.418.0",
+    "path-browserify": "^1.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-scripts": "5.0.1",
+    "wait-on": "^7.2.0",
+    "web-vitals": "^4.2.2"
+  },
+  "devDependencies": {
+    "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8",
+    "tailwindcss": "^3.4.7"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "electron:dev": "concurrently \"cross-env BROWSER=none npm start\" \"wait-on http://localhost:3000 && node node_modules/electron/cli.js .\"",
+    "electron:build": "npm run build && electron-builder",
+    "tailwind:build": "tailwindcss build src/index.css -o public/tailwind.css"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "build": {
+    "appId": "com.example.aitagger",
+    "files": [
+      "build/**/*",
+      "electron.js",
+      "preload.js",
+      "node_modules/**/*"
+    ],
+    "directories": {
+      "buildResources": "assets"
+    }
+  }
+}
+
