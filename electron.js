@@ -3,7 +3,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('node:path'); // Use node:path for clarity
 const fs = require('node:fs').promises; // Use promises version of fs
 const crypto = require('node:crypto');
-// const electronIsDev = require('electron-is-dev'); // <-- Remove this line
+// const electronIsDevRequire = require('electron-is-dev'); // <-- REMOVED standard require
 // const { JSONFile, Low } = require('lowdb'); // Keep lowdb v7 commented out
 const low = require('lowdb'); // <--- Use require for lowdb v1
 const FileSync = require('lowdb/adapters/FileSync'); // <--- Adapter for lowdb v1
@@ -15,19 +15,17 @@ console.log("--- Electron Main Process Starting ---");
 
 // --- Dynamically import electron-is-dev ---
 let electronIsDev;
-async function loadElectronIsDev() {
-    try {
-        // Use dynamic import() for ESM packages
-        const module = await import('electron-is-dev');
-        electronIsDev = module.default; // Assuming default export based on common patterns
+const electronIsDevPromise = import('electron-is-dev')
+    .then(module => {
+        electronIsDev = module.default; // Assign the default export
         console.log("electron-is-dev loaded successfully:", electronIsDev);
-    } catch (err) {
+        return electronIsDev; // Resolve the promise with the value
+    })
+    .catch(err => {
         console.error("Failed to load electron-is-dev:", err);
-        // Set a default value or handle the error appropriately
         electronIsDev = false; // Default to false if import fails
-    }
-}
-const electronIsDevPromise = loadElectronIsDev(); // Store the promise
+        return electronIsDev; // Resolve with the default value
+    });
 // --- End dynamic import ---
 
 
@@ -40,26 +38,53 @@ console.log(`Database path: ${dbPath}`); // Log the determined path
 // Configure lowdb v1 adapter
 let db;
 try {
-    const adapter = new FileSync(dbPath); // Use FileSync adapter for v1
-    db = low(adapter); // Initialize lowdb v1
+    // Ensure the directory exists before creating the adapter
+    fs.mkdir(app.getPath('userData'), { recursive: true })
+      .then(() => {
+        const adapter = new FileSync(dbPath); // Use FileSync adapter for v1
+        db = low(adapter); // Initialize lowdb v1
 
-    // Set default data if file doesn't exist or is empty
-    db.defaults({ images: [] }).write(); // Use v1 defaults syntax
-    console.log("Database initialized successfully at:", dbPath);
-} catch (error) {
-     console.error("Failed to initialize database:", error);
-     // Handle error appropriately - maybe show an error dialog to the user
+        // Set default data if file doesn't exist or is empty
+        db.defaults({ images: [] }).write(); // Use v1 defaults syntax
+        console.log("Database initialized successfully at:", dbPath);
+      })
+      .catch(initError => {
+        console.error("Failed to initialize database directory or file:", initError);
+        handleDBInitializationError(initError);
+      });
+
+} catch (error) { // Catch synchronous errors during setup (less likely now)
+     console.error("Synchronous error during database setup:", error);
+     handleDBInitializationError(error);
+}
+
+function handleDBInitializationError(error) {
+     console.error("Database initialization failed:", error);
      try {
          // Check if app is ready before using dialog
          if (app.isReady()) {
             dialog.showErrorBox("Database Error", `Failed to initialize the database at ${dbPath}. Please check permissions or delete the file if corrupted. Error: ${error.message}`);
          } else {
-             console.error("App not ready, cannot show dialog for DB error.");
+             // If app isn't ready, log to console as dialog might fail
+             console.error("App not ready, cannot show dialog for DB error. DB Path:", dbPath, "Error:", error.message);
+             // Attempt to show error later when app is ready
+              app.on('ready', () => {
+                 try {
+                    dialog.showErrorBox("Database Error (Delayed)", `Failed to initialize the database at ${dbPath}. Please check permissions or delete the file if corrupted. Error: ${error.message}`);
+                 } catch (lateDialogError) {
+                     console.error("Failed to show delayed database error dialog:", lateDialogError);
+                 }
+                app.quit(); // Quit after showing the delayed dialog
+             });
+
          }
      } catch (dialogError) {
          console.error("Failed to show database error dialog:", dialogError);
      }
-     // Don't quit immediately, let app.whenReady handle it
+      // Don't quit immediately if app isn't ready, let the 'ready' event handle it
+     if (app.isReady()) {
+         app.quit();
+     }
      db = null; // Ensure db is null if failed
 }
 
@@ -84,7 +109,7 @@ if (GEMINI_API_KEY) {
 }
 
 // --- Main Window ---
-async function createWindow() { // Make async again
+async function createWindow() { // Make async again to await the import
    // --- Add this console log ---
    console.log("--- createWindow function called ---");
    // --- End of added log ---
@@ -92,10 +117,11 @@ async function createWindow() { // Make async again
     // Ensure electronIsDev is loaded before using it
     await electronIsDevPromise; // Wait for the dynamic import to finish
     if (typeof electronIsDev === 'undefined') {
-        console.error("electron-is-dev was not loaded correctly. Defaulting to false.");
+        // This case should ideally not happen if loadElectronIsDev sets a fallback
+        console.error("electron-is-dev was not loaded correctly and has no value. Defaulting to false.");
         electronIsDev = false; // Ensure it has a fallback value
     }
-    console.log(`Is development environment? ${electronIsDev}`); // Log the value
+    console.log(`Is development environment? ${electronIsDev}`); // Log the value after await
 
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -163,6 +189,11 @@ app.whenReady().then(async () => { // Make async
 
      if (!db) { // Check if DB initialization failed earlier
          console.error("Database failed to initialize. Exiting.");
+         // Give user a chance to see console before quitting in dev
+         if (electronIsDev) {
+             console.log("Exiting in 5 seconds due to DB init failure...");
+             await new Promise(resolve => setTimeout(resolve, 5000));
+         }
          app.quit();
          return;
      }
@@ -196,6 +227,10 @@ ipcMain.handle('read-file-as-blob', async (event, filePath) => {
         console.log(`Reading file for blob: ${filePath}`); // Log path
         const buffer = await fs.readFile(filePath);
          // Convert Node.js Buffer to ArrayBuffer before sending
+         // Make sure buffer exists before accessing properties
+         if (!buffer) {
+             throw new Error("File read returned empty buffer.");
+         }
          const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
         console.log(`Successfully read ${arrayBuffer.byteLength} bytes for blob.`);
         return { success: true, data: arrayBuffer };
@@ -212,8 +247,8 @@ ipcMain.handle('load-images', async () => { // Keep async for potential future a
          if (!db) throw new Error("Database not initialized");
         // For lowdb v1, data is typically read synchronously at init or via db.read() explicitly if needed
         const images = db.get('images').value(); // Use v1 .get().value() syntax
-        console.log("Sending images to frontend:", images.length);
-        return { success: true, images: images };
+        console.log("Sending images to frontend:", images ? images.length : 0);
+        return { success: true, images: images || [] }; // Ensure images is always an array
     } catch (error) {
         console.error('Error loading images:', error);
         return { success: false, error: error.message };
@@ -238,6 +273,10 @@ ipcMain.handle('add-images', async (event) => {
      console.log("Selected file paths:", result.filePaths);
 
      const imagesCollection = db.get('images'); // Get collection reference v1
+     if (!imagesCollection.value()) { // Ensure collection exists if db was empty
+        db.set('images', []).write();
+        imagesCollection = db.get('images');
+     }
      const existingPaths = new Set(imagesCollection.map('path').value()); // Use v1 map/value syntax
      const newImages = [];
 
