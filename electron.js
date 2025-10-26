@@ -3,8 +3,10 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('node:path'); // Use node:path for clarity
 const fs = require('node:fs').promises; // Use promises version of fs
 const crypto = require('node:crypto');
-// const electronIsDev = require('electron-is-dev'); // <--- Remove this line
-const { JSONFile, Low } = require('lowdb'); // Use correct import style
+// const electronIsDev = require('electron-is-dev'); // <-- Remove this line
+// const { JSONFile, Low } = require('lowdb'); // Keep lowdb v7 commented out
+const low = require('lowdb'); // <--- Use require for lowdb v1
+const FileSync = require('lowdb/adapters/FileSync'); // <--- Adapter for lowdb v1
 const { GoogleGenerativeAI } = require('@google/generative-ai'); // Added for Gemini
 
 // --- Add this console log right at the beginning ---
@@ -15,16 +17,17 @@ console.log("--- Electron Main Process Starting ---");
 let electronIsDev;
 async function loadElectronIsDev() {
     try {
+        // Use dynamic import() for ESM packages
         const module = await import('electron-is-dev');
-        electronIsDev = module.default; // Assuming default export
-        console.log("electron-is-dev loaded successfully.");
+        electronIsDev = module.default; // Assuming default export based on common patterns
+        console.log("electron-is-dev loaded successfully:", electronIsDev);
     } catch (err) {
         console.error("Failed to load electron-is-dev:", err);
         // Set a default value or handle the error appropriately
         electronIsDev = false; // Default to false if import fails
     }
 }
-const electronIsDevPromise = loadElectronIsDev();
+const electronIsDevPromise = loadElectronIsDev(); // Store the promise
 // --- End dynamic import ---
 
 
@@ -34,34 +37,31 @@ const electronIsDevPromise = loadElectronIsDev();
 const dbPath = path.join(app.getPath('userData'), 'db.json');
 console.log(`Database path: ${dbPath}`); // Log the determined path
 
-// Configure lowdb to use JSONFile adapter with the determined path
-const adapter = new JSONFile(dbPath);
-
-// Initialize LowDB instance asynchronously
+// Configure lowdb v1 adapter
 let db;
-async function initializeDb() {
-    try {
-        db = new Low(adapter);
-        await db.read(); // Read data from file
-        // Set default data if file doesn't exist or is empty
-        db.data ||= { images: [] };
-        await db.write(); // Write defaults if needed
-        console.log("Database initialized successfully at:", dbPath);
-        return db; // Return the initialized db instance
-    } catch (error) {
-         console.error("Failed to initialize database:", error);
-         // Handle error appropriately - maybe show an error dialog to the user
-         try {
-             dialog.showErrorBox("Database Error", `Failed to initialize the database at ${dbPath}. Please check permissions or delete the file if corrupted. Error: ${error.message}`);
-         } catch (dialogError) {
-             console.error("Failed to show database error dialog:", dialogError);
+try {
+    const adapter = new FileSync(dbPath); // Use FileSync adapter for v1
+    db = low(adapter); // Initialize lowdb v1
+
+    // Set default data if file doesn't exist or is empty
+    db.defaults({ images: [] }).write(); // Use v1 defaults syntax
+    console.log("Database initialized successfully at:", dbPath);
+} catch (error) {
+     console.error("Failed to initialize database:", error);
+     // Handle error appropriately - maybe show an error dialog to the user
+     try {
+         // Check if app is ready before using dialog
+         if (app.isReady()) {
+            dialog.showErrorBox("Database Error", `Failed to initialize the database at ${dbPath}. Please check permissions or delete the file if corrupted. Error: ${error.message}`);
+         } else {
+             console.error("App not ready, cannot show dialog for DB error.");
          }
-         app.quit(); // Exit if DB fails to load
-         return null; // Return null if initialization failed
-    }
+     } catch (dialogError) {
+         console.error("Failed to show database error dialog:", dialogError);
+     }
+     // Don't quit immediately, let app.whenReady handle it
+     db = null; // Ensure db is null if failed
 }
-// Call initializeDb early and store the promise
-const dbInitializationPromise = initializeDb();
 
 
 // --- Constants ---
@@ -84,17 +84,18 @@ if (GEMINI_API_KEY) {
 }
 
 // --- Main Window ---
-async function createWindow() { // Make createWindow async
+async function createWindow() { // Make async again
    // --- Add this console log ---
    console.log("--- createWindow function called ---");
    // --- End of added log ---
 
     // Ensure electronIsDev is loaded before using it
-    await electronIsDevPromise;
+    await electronIsDevPromise; // Wait for the dynamic import to finish
     if (typeof electronIsDev === 'undefined') {
-        console.error("electron-is-dev could not be loaded. Defaulting to false.");
-        electronIsDev = false; // Ensure it has a value
+        console.error("electron-is-dev was not loaded correctly. Defaulting to false.");
+        electronIsDev = false; // Ensure it has a fallback value
     }
+    console.log(`Is development environment? ${electronIsDev}`); // Log the value
 
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -103,8 +104,6 @@ async function createWindow() { // Make createWindow async
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true, // Recommended for security
       nodeIntegration: false, // Recommended for security
-      // Allow loading local file URLs via blobs (though readFileAsBlob is better)
-       // webSecurity: false, // TEMPORARY - Be cautious using this, consider readFileAsBlob
     },
     icon: path.join(__dirname, 'assets', 'icon.png') // Example icon path
   });
@@ -123,7 +122,10 @@ async function createWindow() { // Make createWindow async
 
   // Open DevTools automatically if in development
   if (electronIsDev) {
+      console.log("Opening DevTools because electronIsDev is true.");
     mainWindow.webContents.openDevTools();
+  } else {
+      console.log("Not opening DevTools because electronIsDev is false.");
   }
 
    // --- Add listener for 'did-fail-load' ---
@@ -154,27 +156,25 @@ async function createWindow() { // Make createWindow async
 }
 
 // --- App Lifecycle ---
-app.whenReady().then(async () => {
+app.whenReady().then(async () => { // Make async
     // --- Add this console log ---
     console.log("--- App is ready ---");
     // --- End of added log ---
 
-    // Ensure DB is initialized before creating window or setting up IPC handlers
-    db = await dbInitializationPromise;
-     if (!db) {
+     if (!db) { // Check if DB initialization failed earlier
          console.error("Database failed to initialize. Exiting.");
          app.quit();
          return;
      }
 
-    createWindow(); // Now calling an async function
+    await createWindow(); // Await the async function
 
-    app.on('activate', () => {
+    app.on('activate', async () => { // Make async
         // --- Add this console log ---
         console.log("--- App activated ---");
         // --- End of added log ---
         if (BrowserWindow.getAllWindows().length === 0) {
-            createWindow(); // Now calling an async function
+            await createWindow(); // Await the async function
         }
     });
 });
@@ -207,13 +207,13 @@ ipcMain.handle('read-file-as-blob', async (event, filePath) => {
 
 
 // Load existing images from DB
-ipcMain.handle('load-images', async () => {
+ipcMain.handle('load-images', async () => { // Keep async for potential future async operations
     try {
-         await dbInitializationPromise; // Ensure DB is ready
          if (!db) throw new Error("Database not initialized");
-        await db.read(); // Re-read potentially updated data
-        console.log("Sending images to frontend:", db.data.images.length);
-        return { success: true, images: db.data.images };
+        // For lowdb v1, data is typically read synchronously at init or via db.read() explicitly if needed
+        const images = db.get('images').value(); // Use v1 .get().value() syntax
+        console.log("Sending images to frontend:", images.length);
+        return { success: true, images: images };
     } catch (error) {
         console.error('Error loading images:', error);
         return { success: false, error: error.message };
@@ -223,7 +223,6 @@ ipcMain.handle('load-images', async () => {
 // Add new images
 ipcMain.handle('add-images', async (event) => {
    try {
-     await dbInitializationPromise; // Ensure DB is ready
      if (!db) throw new Error("Database not initialized");
 
      const result = await dialog.showOpenDialog({
@@ -238,8 +237,8 @@ ipcMain.handle('add-images', async (event) => {
 
      console.log("Selected file paths:", result.filePaths);
 
-     await db.read(); // Ensure we have the latest data before adding
-     const existingPaths = new Set(db.data.images.map(img => img.path));
+     const imagesCollection = db.get('images'); // Get collection reference v1
+     const existingPaths = new Set(imagesCollection.map('path').value()); // Use v1 map/value syntax
      const newImages = [];
 
      for (const filePath of result.filePaths) {
@@ -250,7 +249,8 @@ ipcMain.handle('add-images', async (event) => {
            description: '',
            last_updated: new Date().toISOString(),
          };
-         db.data.images.push(newImage);
+         // Use push().write() for lowdb v1 to add and save
+         imagesCollection.push(newImage).write();
          newImages.push(newImage); // Collect only the newly added ones
           existingPaths.add(filePath); // Add to set to prevent duplicate additions in the same batch
          console.log(`Added new image: ${filePath}`);
@@ -258,12 +258,9 @@ ipcMain.handle('add-images', async (event) => {
          console.log(`Skipped existing image: ${filePath}`);
        }
      }
+     // write() was called inside the loop for v1
 
-     if (newImages.length > 0) {
-        await db.write(); // Save changes if new images were added
-        console.log(`Saved ${newImages.length} new images to DB.`);
-     }
-
+     console.log(`Processed ${result.filePaths.length} files, added ${newImages.length} new images.`);
      return { success: true, newImages: newImages };
    } catch (error) {
        console.error("Error adding images:", error);
@@ -273,17 +270,16 @@ ipcMain.handle('add-images', async (event) => {
 
 
 // Save description for an image
-ipcMain.handle('save-description', async (event, { id, description }) => {
+ipcMain.handle('save-description', async (event, { id, description }) => { // Keep async
     try {
-        await dbInitializationPromise; // Ensure DB is ready
         if (!db) throw new Error("Database not initialized");
-        await db.read();
-        const image = db.data.images.find(img => img.id === id);
+        const imageChain = db.get('images').find({ id: id }); // Use v1 find syntax
+        const image = imageChain.value();
+
         if (image) {
             if (image.description !== description) { // Only write if changed
-                image.description = description;
-                image.last_updated = new Date().toISOString();
-                await db.write();
+                 // Use assign().write() for lowdb v1 update
+                 imageChain.assign({ description: description, last_updated: new Date().toISOString() }).write();
                  console.log(`Saved description for image ID ${id}`);
             } else {
                  console.log(`Description for image ID ${id} unchanged, skipped write.`);
@@ -300,15 +296,13 @@ ipcMain.handle('save-description', async (event, { id, description }) => {
 });
 
 // Remove an image entry from DB
-ipcMain.handle('remove-image', async (event, imageId) => {
+ipcMain.handle('remove-image', async (event, imageId) => { // Keep async
     try {
-        await dbInitializationPromise; // Ensure DB is ready
         if (!db) throw new Error("Database not initialized");
-        await db.read();
-         const initialLength = db.data.images.length;
-        db.data.images = db.data.images.filter(img => img.id !== imageId);
-         if (db.data.images.length < initialLength) {
-             await db.write();
+        // Use remove().write() for lowdb v1
+        const result = db.get('images').remove({ id: imageId }).write();
+
+         if (result && result.length > 0) { // remove returns the removed items in v1
              console.log(`Removed image ID ${imageId} from DB.`);
              return { success: true };
          } else {
