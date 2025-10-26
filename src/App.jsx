@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, X, Bot, Edit2, Trash2, FolderOpen, Image as ImageIcon, Loader2, Tag, CheckSquare, Square, RefreshCcw, ZoomIn, SlidersHorizontal, File as FileIcon, Folder as FolderIcon } from 'lucide-react';
+import { Search, X, Bot, Edit2, Trash2, FolderOpen, Image as ImageIcon, Loader2, Tag, CheckSquare, Square, RefreshCcw, ZoomIn, SlidersHorizontal, File as FileIcon, Folder as FolderIcon, Settings } from 'lucide-react';
+import SettingsModal from './Settings'; // <-- Import the new component
 
 // --- Helper Functions ---
 const getBasename = (filePath) => {
@@ -75,6 +76,7 @@ function App() {
   const [previewImage, setPreviewImage] = useState(null); // State for image preview modal { src, alt }
   const [aiPrompts, setAiPrompts] = useState({}); // State for predefined AI prompts
   const [isLoading, setIsLoading] = useState(false); // General loading state for refresh
+  const [isSettingsVisible, setIsSettingsVisible] = useState(false); // <-- State for settings modal
 
   // --- Grid Column Class Calculation ---
   const getGridColsClass = (cols) => {
@@ -658,6 +660,20 @@ function App() {
        setSearchTerm('');
    };
 
+  // --- NEW: Settings Modal Handlers ---
+  const handleSavePrompts = async (newPrompts) => {
+    if (window.electronAPI?.saveAIPrompts) {
+      const result = await window.electronAPI.saveAIPrompts(newPrompts);
+      if (result.success) {
+        setAiPrompts(newPrompts); // Update state
+        showNotification("AI prompts saved successfully!", 'success');
+        setIsSettingsVisible(false); // Close modal
+      } else {
+        showNotification(`Error saving prompts: ${result.error}`, 'error');
+      }
+    }
+  };
+
 
   // --- Filtering ---
   const filteredImages = images.filter(image => {
@@ -755,6 +771,13 @@ function App() {
                 <FolderIcon size={14} />
                  <span>Folder</span>
               </button>
+                <button
+                    onClick={() => setIsSettingsVisible(true)}
+                    className="p-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition"
+                    title="Settings"
+                >
+                    <Settings size={16} />
+                </button>
            </div>
         </header>
 
@@ -1024,6 +1047,13 @@ function App() {
           </div>
          )}
       </main>
+
+        <SettingsModal
+            isVisible={isSettingsVisible}
+            prompts={aiPrompts}
+            onClose={() => setIsSettingsVisible(false)}
+            onSave={handleSavePrompts}
+        />
     </div>
   );
 }
