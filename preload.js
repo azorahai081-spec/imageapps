@@ -1,54 +1,45 @@
 // preload.js
 const { contextBridge, ipcRenderer } = require('electron');
-const path = require('path'); // Node path needed here
+// No Node.js modules allowed here due to contextIsolation:true
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  addImages: () => ipcRenderer.invoke('add-images'),
+  // --- NEW: Separate handlers for files and folders ---
+  addImageFiles: () => ipcRenderer.invoke('add-image-files'),
+  addImageFolders: () => ipcRenderer.invoke('add-image-folders'),
+  
+  // Existing functions
   loadImages: () => ipcRenderer.invoke('load-images'),
   saveDescription: (data) => ipcRenderer.invoke('save-description', data),
-  removeImage: (id) => ipcRenderer.invoke('remove-image', id),
+  removeImage: (id) => ipcRenderer.invoke('remove-images', id), // Point to bulk handler
   describeImage: (data) => ipcRenderer.invoke('describe-image', data),
-  openFolder: (filePath) => ipcRenderer.send('open-folder', filePath), // Use send for one-way
+  openFolder: (filePath) => ipcRenderer.send('open-folder', filePath),
+  saveTags: (data) => ipcRenderer.invoke('save-tags', data),
+  removeImagesBulk: (ids) => ipcRenderer.invoke('remove-images', ids),
+  getAIPrompts: () => ipcRenderer.invoke('get-ai-prompts'),
 
-  // Function to read file as Blob data (ArrayBuffer)
+  // readFileAsBlob remains the same
   readFileAsBlob: async (filePath) => {
     try {
-        console.log(`Preload: Requesting buffer for ${filePath}`);
-        const result = await ipcRenderer.invoke('read-file-as-buffer', filePath);
+        console.log(`Preload: Requesting blob data for ${filePath}`);
+        const result = await ipcRenderer.invoke('read-file-as-blob', filePath);
 
-        // Check if the main process returned an error object
-        if (result && result.error) {
+        if (result && !result.success && result.error) {
             console.error(`Preload: Error received from main for ${filePath}: ${result.error}`);
-            return null; // Indicate failure
+            return null;
+        }
+        if (!result || !result.success || !(result.data instanceof ArrayBuffer) || typeof result.mimeType !== 'string') {
+             console.error(`Preload: Received invalid data structure from main for ${filePath}`, result);
+             return null;
         }
 
-        // Check if we received an ArrayBuffer
-        if (!(result instanceof ArrayBuffer)) {
-             console.error(`Preload: Received data is not an ArrayBuffer for ${filePath}`, result);
-             return null; // Indicate failure
-        }
+        const arrayBuffer = result.data;
+        const mimeType = result.mimeType;
+        console.log(`Preload: Received buffer for ${filePath}, length: ${arrayBuffer.byteLength}, mimeType: ${mimeType}`);
 
-        console.log(`Preload: Received buffer for ${filePath}, length: ${result.byteLength}`);
-
-        // Determine MIME type (could be passed back or inferred again here)
-        const ext = path.extname(filePath).toLowerCase(); // Use path from require
-        let mimeType = 'image/jpeg'; // Default
-        const mimeMap = {
-           '.png': 'image/png',
-           '.jpg': 'image/jpeg',
-           '.jpeg': 'image/jpeg',
-           '.webp': 'image/webp',
-           '.gif': 'image/gif',
-           '.bmp': 'image/bmp',
-        };
-        mimeType = mimeMap[ext] || mimeType;
-
-        return new Blob([result], { type: mimeType });
-
+        return new Blob([arrayBuffer], { type: mimeType });
     } catch (error) {
-      // Catch errors thrown by ipcRenderer.invoke itself (e.g., if main handler rejects)
-      console.error(`Preload: Error invoking read-file-as-buffer for ${filePath}:`, error);
-      return null; // Indicate failure
+      console.error(`Preload: Error invoking read-file-as-blob for ${filePath}:`, error);
+      return null;
     }
   }
 });

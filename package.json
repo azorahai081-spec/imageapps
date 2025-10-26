@@ -10,7 +10,7 @@
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
     "electron-is-dev": "^3.0.1",
-    "lowdb": "^7.0.1",
+    "lowdb": "^1.0.0",
     "lucide-react": "^0.418.0",
     "path-browserify": "^1.0.1",
     "react": "^18.3.1",
@@ -30,7 +30,7 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "electron:dev": "concurrently \"cross-env BROWSER=none npm start\" \"wait-on http://localhost:3000 && node node_modules/electron/cli.js .\"",
+    "electron:dev": "concurrently \"cross-env BROWSER=none npm start\" \"wait-on http://localhost:3000 && node ./node_modules/electron/cli.js .\"",
     "electron:build": "npm run build && electron-builder",
     "tailwind:build": "tailwindcss build src/index.css -o public/tailwind.css"
   },
