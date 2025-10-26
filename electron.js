@@ -4,7 +4,6 @@ const path = require('node:path'); // Use node:path for clarity
 const fsSync = require('node:fs'); // Use SYNCHRONOUS fs for initial setup
 const fs = require('node:fs').promises; // Use promises version of fs
 const crypto = require('node:crypto');
-const { JSONFile, Low } = require('lowdb');
 const { GoogleGenerativeAI } = require('@google/generative-ai'); // Added for Gemini
 
 // --- Add this console log right at the beginning ---
@@ -33,6 +32,7 @@ const dbPath = path.join(app.getPath('userData'), 'db.json'); // Define dbPath e
 
 async function initializeDatabase() {
     try {
+        const { JSONFile, Low } = await import('lowdb');
         const userDataPath = app.getPath('userData');
         console.log(`Ensuring directory exists: ${userDataPath}`);
         // Use synchronous mkdir before initializing adapter
@@ -166,7 +166,7 @@ app.whenReady().then(async () => { // Make async
     // --- End of added log ---
 
     // *** MOVED DATABASE INITIALIZATION HERE ***
-    const dbInitialized = initializeDatabase();
+    const dbInitialized = await initializeDatabase();
 
      if (!dbInitialized || !db) { // Check if DB initialization failed
          console.error("Database failed to initialize during app ready. Exiting.");
