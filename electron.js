@@ -36,7 +36,16 @@ function initializeDatabase() {
         console.log(`Database path: ${dbPath}`);
         const adapter = new FileSync(dbPath);
         db = low(adapter);
-        db.defaults({ images: [] }).write();
+        db.defaults({ images: [], prompts: {} }).write();
+
+        // --- NEW: Initialize or validate prompts ---
+        const promptsInDb = db.get('prompts').value();
+        if (!promptsInDb || Object.keys(promptsInDb).length === 0) {
+            console.log("No prompts found in DB, initializing with defaults.");
+            db.set('prompts', AI_PROMPTS).write();
+        }
+
+
         // Migration: Ensure all existing images have 'tags' and 'folderName'
         let needsWrite = false;
         const images = db.get('images').value() || [];
@@ -93,9 +102,10 @@ const SUPPORTED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif'])
 const AI_PROMPTS = {
     basic: "Describe this image concisely.",
     creative: "Write a vivid and detailed creative caption for this image.",
-    midjourney: "Generate a descriptive prompt, focusing on visual elements, style, and composition, suitable for an AI image generator like Midjourney.",
-    product: "Write a short, engaging product description based on this image for an e-commerce listing.",
-    dataset: "Provide a neutral, objective caption describing the main subject and scene for a dataset.",
+    "typography": "Analyze the typography in this image. Identify the font styles (e.g., serif, sans-serif, script), their hierarchy, and how they contribute to the overall design and readability.",
+    "color": "Break down the color palette of this image. Identify the primary, secondary, and accent colors, and describe the mood or feeling they evoke.",
+    "layout": "Deconstruct the layout and composition of this image. Explain how elements are arranged, the use of negative space, and how the composition guides the viewer's eye.",
+    "design_check": "Perform an overall design check. Analyze the balance, contrast, and hierarchy of the design. Provide suggestions for improvement."
 };
 
 // --- Gemini AI Setup ---
@@ -396,9 +406,30 @@ ipcMain.handle('load-images', async () => {
 // Get predefined AI Prompts
 ipcMain.handle('get-ai-prompts', async () => {
     try {
-        return { success: true, prompts: AI_PROMPTS };
+        if (!db) throw new Error("Database not initialized");
+        const prompts = db.get('prompts').value();
+        return { success: true, prompts: prompts };
     } catch (error) {
         console.error("Error getting AI prompts:", error);
+        return { success: false, error: error.message };
+    }
+});
+
+// --- NEW: Save AI Prompts ---
+ipcMain.handle('save-ai-prompts', async (event, promptsToSave) => {
+    try {
+        if (!db) throw new Error("Database not initialized");
+
+        // Basic validation: ensure it's an object
+        if (typeof promptsToSave !== 'object' || promptsToSave === null) {
+            return { success: false, error: 'Invalid prompts format. Must be an object.' };
+        }
+
+        db.set('prompts', promptsToSave).write();
+        console.log("AI prompts saved successfully.");
+        return { success: true };
+    } catch (error) {
+        console.error("Error saving AI prompts:", error);
         return { success: false, error: error.message };
     }
 });
