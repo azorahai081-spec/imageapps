@@ -1,0 +1,3 @@
+
+> ai-image-tagger@0.1.0 electron:dev
+> concurrently "cross-env BROWSER=none npm start" "wait-on http://localhost:3000 && node ./node_modules/electron/cli.js ."

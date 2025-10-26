@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, X, Bot, Edit2, Trash2, FolderOpen, Image as ImageIcon, Loader2, Tag, CheckSquare, Square, RefreshCcw, ZoomIn, SlidersHorizontal, File as FileIcon, Folder as FolderIcon, Settings } from 'lucide-react';
+import { Search, X, Bot, Edit2, Trash2, FolderOpen, Image as ImageIcon, Loader2, Tag, CheckSquare, Square, RefreshCcw, ZoomIn, SlidersHorizontal, File as FileIcon, Folder as FolderIcon, Settings, List, Grid } from 'lucide-react';
 import SettingsModal from './Settings'; // <-- Import the new component
 
 // --- Helper Functions ---
@@ -77,6 +77,7 @@ function App() {
   const [aiPrompts, setAiPrompts] = useState({}); // State for predefined AI prompts
   const [isLoading, setIsLoading] = useState(false); // General loading state for refresh
   const [isSettingsVisible, setIsSettingsVisible] = useState(false); // <-- State for settings modal
+  const [view, setView] = useState('list'); // <-- State for view mode
 
   // --- Grid Column Class Calculation ---
   const getGridColsClass = (cols) => {
@@ -728,6 +729,27 @@ function App() {
                       className="w-20 md:w-24 h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer range-sm accent-indigo-500"
                   />
               </div>
+
+              {/* View Toggle */}
+                <div className="flex items-center space-x-1 bg-gray-700 rounded-lg p-1">
+                    <button
+                        onClick={() => setView('list')}
+                        className={`p-1.5 rounded-md transition ${view === 'list' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-600'}`}
+                        title="List View"
+                        aria-label="list-view"
+                    >
+                        <List size={16} />
+                    </button>
+                    <button
+                        onClick={() => setView('grid')}
+                        className={`p-1.5 rounded-md transition ${view === 'grid' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:bg-gray-600'}`}
+                        title="Grid View"
+                        aria-label="grid-view"
+                    >
+                        <Grid size={16} />
+                    </button>
+                </div>
+
              {/* Selection Controls */}
              {selectedImageIds.size > 0 ? (
                  <>
@@ -832,9 +854,84 @@ function App() {
                    {!activeTagFilter && searchTerm === '' && images.length === 0 && <p>Add images to begin.</p>}
                </div>
            )}
-          {/* Image Grid */}
-          {filteredImages.length > 0 && (
-            <div className={`grid ${getGridColsClass(gridColumns)} gap-4`}>
+          {/* Image Grid / List */}
+          {view === 'list' && (
+            <div className="space-y-4" data-testid="list-view">
+              {filteredImages.map((image) => (
+                <div
+                  key={image.id}
+                  className={`flex items-start space-x-4 bg-gray-800 rounded-lg p-3 shadow-lg border border-gray-700/50 cursor-pointer transition-all duration-150 ease-in-out
+                            ${selectedImageIds.has(image.id) ? 'border-indigo-500 ring-2 ring-indigo-500' : 'hover:shadow-indigo-500/30'}`}
+                  onContextMenu={(e) => handleContextMenu(e, image.id, image.path)}
+                  onClick={(e) => handleImageClick(image.id, e)}
+                >
+                  <div className="flex-shrink-0 w-32 h-32 relative bg-gray-700 rounded-md overflow-hidden">
+                    <img
+                      src={imageObjectURLs[image.id] || `https://placehold.co/128x128/777/eee?text=Loading...`}
+                      alt={getBasename(image.path)}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                    <div className={`absolute top-1.5 left-1.5 p-0.5 rounded ${selectedImageIds.has(image.id) ? 'bg-indigo-600/80 opacity-100' : 'bg-black/50 opacity-0 transition-opacity group-hover:opacity-100'}`}>
+                      {selectedImageIds.has(image.id) ? <CheckSquare size={16} className="text-white" /> : <Square size={16} className="text-gray-300" />}
+                    </div>
+                  </div>
+                  <div className="flex-grow">
+                    <div className="font-semibold text-gray-300">{getBasename(image.path)}</div>
+                    <div className="text-xs text-gray-500 mb-2">{image.folderName || 'N/A'}</div>
+                    {editingDescId === image.id ? (
+                      <textarea
+                        ref={editInputRef}
+                        value={editDescription}
+                        onChange={handleEditInputChange}
+                        onKeyDown={handleEditInputKeyDown}
+                        onBlur={handleSaveDescEdit}
+                        className="w-full bg-gray-600 border border-indigo-500 rounded-md p-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-y scrollbar-thin scrollbar-thumb-gray-500 scrollbar-track-gray-600"
+                        placeholder="Editing description..."
+                        rows={4}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <textarea
+                        value={image.description}
+                        onChange={(e) => handleDescriptionChangeWithDebounce(image.id, e.target.value)}
+                        onDoubleClick={() => handleEditDescription()}
+                        className="w-full bg-gray-700 border border-gray-600 rounded-md p-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-y scrollbar-thin scrollbar-thumb-gray-500 scrollbar-track-gray-700 placeholder-gray-400 cursor-text"
+                        placeholder="Add description (dbl-click to edit)..."
+                        rows={4}
+                        readOnly
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    )}
+                    <div className="flex flex-wrap gap-1 items-center mt-2 min-h-[24px]">
+                      {(image.tags || []).map(tag => (
+                        <span key={tag} className="tag-item flex items-center bg-gray-600 text-gray-300 text-xs px-1.5 py-0.5 rounded hover:bg-red-600/50 group/tag cursor-pointer" title={`Click to remove tag: ${tag}`} onClick={(e) => { e.stopPropagation(); handleRemoveTag(image.id, tag); }}>
+                          {tag}
+                          <X size={10} className="ml-1 opacity-0 group-hover/tag:opacity-100 transition-opacity" />
+                        </span>
+                      ))}
+                      {editingTagsId === image.id ? (
+                        <input
+                          ref={tagInputRef} type="text" value={currentTagsInput}
+                          onChange={(e) => setCurrentTagsInput(e.target.value)}
+                          onKeyDown={(e) => handleTagInputKeyDown(e, image.id)}
+                          onBlur={() => handleTagInputBlur(image.id)}
+                          className="flex-grow bg-gray-600 border border-indigo-500 rounded px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 min-w-[50px]"
+                          placeholder="tag1, tag2..." onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <button onClick={(e) => { e.stopPropagation(); handleStartEditingTags(image.id); }} className="text-indigo-400 hover:text-indigo-300 text-xs ml-1 p-0.5 rounded hover:bg-gray-600" title="Edit Tags">
+                          <Tag size={12}/>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {filteredImages.length > 0 && view === 'grid' && (
+            <div className={`grid ${getGridColsClass(gridColumns)} gap-4`} data-testid="grid-view">
               {filteredImages.map((image) => (
                 <div
                   key={image.id}
@@ -845,88 +942,80 @@ function App() {
                   onDoubleClick={() => imageObjectURLs[image.id] && !imageObjectURLs[image.id].includes('placehold.co') ? openPreview(imageObjectURLs[image.id], getBasename(image.path)) : null}
                   style={{ minHeight: '150px' }}
                 >
-                    {/* Image Area */}
-                  <div className="flex-grow relative bg-gray-700" style={{ minHeight: '80px'}}>
-                      <img
-                        src={imageObjectURLs[image.id] || `https://placehold.co/200x150/777/eee?text=Loading...`}
-                        alt={getBasename(image.path)}
-                        className="absolute inset-0 w-full h-full object-cover"
-                        loading="lazy"
-                       />
-                       {/* Selection Checkbox Overlay */}
-                       <div className={`absolute top-1.5 left-1.5 p-0.5 rounded ${selectedImageIds.has(image.id) ? 'bg-indigo-600/80 opacity-100' : 'bg-black/50 opacity-0 transition-opacity group-hover:opacity-100'}`}>
-                           {selectedImageIds.has(image.id) ? <CheckSquare size={16} className="text-white" /> : <Square size={16} className="text-gray-300" />}
-                       </div>
-                   </div>
-
-                  {/* Info Area */}
-                   <div className="p-2 flex-shrink-0 flex flex-col space-y-1">
-                     {/* Description Textarea */}
-                      {editingDescId === image.id ? (
-                        <textarea
-                          ref={editInputRef}
-                          value={editDescription}
-                          onChange={handleEditInputChange}
-                          onKeyDown={handleEditInputKeyDown}
-                          onBlur={handleSaveDescEdit}
-                          className="w-full bg-gray-600 border border-indigo-500 rounded-md p-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none scrollbar-thin scrollbar-thumb-gray-500 scrollbar-track-gray-600"
-                          placeholder="Editing description..."
-                          rows={2}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                     ) : (
-                        <textarea
-                          value={image.description}
-                          onChange={(e) => handleDescriptionChangeWithDebounce(image.id, e.target.value)}
-                          onDoubleClick={() => handleEditDescription()}
-                          className="w-full bg-gray-700 border border-gray-600 rounded-md p-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none scrollbar-thin scrollbar-thumb-gray-500 scrollbar-track-gray-700 placeholder-gray-400 cursor-text"
-                          placeholder="Add description (dbl-click to edit)..."
-                          rows={2}
-                          readOnly
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                     )}
-                     {/* Tags Area */}
-                     <div className="flex flex-wrap gap-1 items-center min-h-[24px]">
-                       {(image.tags || []).map(tag => (
-                         <span key={tag} className="tag-item flex items-center bg-gray-600 text-gray-300 text-xs px-1.5 py-0.5 rounded hover:bg-red-600/50 group/tag cursor-pointer" title={`Click to remove tag: ${tag}`} onClick={(e) => { e.stopPropagation(); handleRemoveTag(image.id, tag); }}>
-                           {tag}
-                           <X size={10} className="ml-1 opacity-0 group-hover/tag:opacity-100 transition-opacity" />
-                         </span>
-                       ))}
-                       {editingTagsId === image.id ? (
-                           <input
-                             ref={tagInputRef} type="text" value={currentTagsInput}
-                             onChange={(e) => setCurrentTagsInput(e.target.value)}
-                             onKeyDown={(e) => handleTagInputKeyDown(e, image.id)}
-                             onBlur={() => handleTagInputBlur(image.id)}
-                             className="flex-grow bg-gray-600 border border-indigo-500 rounded px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 min-w-[50px]"
-                             placeholder="tag1, tag2..." onClick={(e) => e.stopPropagation()}
-                           />
-                       ) : (
-                           <button onClick={(e) => { e.stopPropagation(); handleStartEditingTags(image.id); }} className="text-indigo-400 hover:text-indigo-300 text-xs ml-1 p-0.5 rounded hover:bg-gray-600" title="Edit Tags">
-                               <Tag size={12}/>
-                           </button>
-                       )}
+                    <div className="flex-grow relative bg-gray-700" style={{ minHeight: '80px'}}>
+                        <img
+                          src={imageObjectURLs[image.id] || `https://placehold.co/200x150/777/eee?text=Loading...`}
+                          alt={getBasename(image.path)}
+                          className="absolute inset-0 w-full h-full object-cover"
+                          loading="lazy"
+                         />
+                         <div className={`absolute top-1.5 left-1.5 p-0.5 rounded ${selectedImageIds.has(image.id) ? 'bg-indigo-600/80 opacity-100' : 'bg-black/50 opacity-0 transition-opacity group-hover:opacity-100'}`}>
+                             {selectedImageIds.has(image.id) ? <CheckSquare size={16} className="text-white" /> : <Square size={16} className="text-gray-300" />}
+                         </div>
                      </div>
-                     {/* Folder & Filename */}
-                      <div className="flex items-center justify-between text-xs mt-1">
-                         <span className="text-gray-500 truncate flex-shrink mr-1" title={`Folder: ${image.folderName || 'N/A'}`}>
-                              <FolderOpen size={12} className="inline mr-1 opacity-70" /> {image.folderName || 'N/A'}
-                          </span>
-                         <span className="text-gray-400 truncate flex-grow text-right" title={getBasename(image.path)}>
-                             {getBasename(image.path)}
-                          </span>
-                      </div>
-                   </div>
 
-                    {/* Loading Indicator */}
-                    {loadingAI[image.id] && (
-                        <div className="absolute inset-0 bg-black bg-opacity-70 flex flex-col items-center justify-center text-white text-xs z-10 rounded-lg">
-                            <Loader2 size={24} className="animate-spin mb-1" />
-                            <span>Generating AI...</span>
+                     <div className="p-2 flex-shrink-0 flex flex-col space-y-1">
+                        {editingDescId === image.id ? (
+                          <textarea
+                            ref={editInputRef}
+                            value={editDescription}
+                            onChange={handleEditInputChange}
+                            onKeyDown={handleEditInputKeyDown}
+                            onBlur={handleSaveDescEdit}
+                            className="w-full bg-gray-600 border border-indigo-500 rounded-md p-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none scrollbar-thin scrollbar-thumb-gray-500 scrollbar-track-gray-600"
+                            placeholder="Editing description..."
+                            rows={2}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                       ) : (
+                          <textarea
+                            value={image.description}
+                            onChange={(e) => handleDescriptionChangeWithDebounce(image.id, e.target.value)}
+                            onDoubleClick={() => handleEditDescription()}
+                            className="w-full bg-gray-700 border border-gray-600 rounded-md p-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none scrollbar-thin scrollbar-thumb-gray-500 scrollbar-track-gray-700 placeholder-gray-400 cursor-text"
+                            placeholder="Add description (dbl-click to edit)..."
+                            rows={2}
+                            readOnly
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                       )}
+                       <div className="flex flex-wrap gap-1 items-center min-h-[24px]">
+                         {(image.tags || []).map(tag => (
+                           <span key={tag} className="tag-item flex items-center bg-gray-600 text-gray-300 text-xs px-1.5 py-0.5 rounded hover:bg-red-600/50 group/tag cursor-pointer" title={`Click to remove tag: ${tag}`} onClick={(e) => { e.stopPropagation(); handleRemoveTag(image.id, tag); }}>
+                             {tag}
+                             <X size={10} className="ml-1 opacity-0 group-hover/tag:opacity-100 transition-opacity" />
+                           </span>
+                         ))}
+                         {editingTagsId === image.id ? (
+                             <input
+                               ref={tagInputRef} type="text" value={currentTagsInput}
+                               onChange={(e) => setCurrentTagsInput(e.target.value)}
+                               onKeyDown={(e) => handleTagInputKeyDown(e, image.id)}
+                               onBlur={() => handleTagInputBlur(image.id)}
+                               className="flex-grow bg-gray-600 border border-indigo-500 rounded px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 min-w-[50px]"
+                               placeholder="tag1, tag2..." onClick={(e) => e.stopPropagation()}
+                             />
+                         ) : (
+                             <button onClick={(e) => { e.stopPropagation(); handleStartEditingTags(image.id); }} className="text-indigo-400 hover:text-indigo-300 text-xs ml-1 p-0.5 rounded hover:bg-gray-600" title="Edit Tags">
+                                 <Tag size={12}/>
+                             </button>
+                         )}
+                       </div>
+                        <div className="flex items-center justify-between text-xs mt-1">
+                           <span className="text-gray-500 truncate flex-shrink mr-1" title={`Folder: ${image.folderName || 'N/A'}`}>
+                                <FolderOpen size={12} className="inline mr-1 opacity-70" /> {image.folderName || 'N/A'}
+                            </span>
+                           <span className="text-gray-400 truncate flex-grow text-right" title={getBasename(image.path)}>
+                               {getBasename(image.path)}
+                            </span>
                         </div>
-                    )}
+                     </div>
+                      {loadingAI[image.id] && (
+                          <div className="absolute inset-0 bg-black bg-opacity-70 flex flex-col items-center justify-center text-white text-xs z-10 rounded-lg">
+                              <Loader2 size={24} className="animate-spin mb-1" />
+                              <span>Generating AI...</span>
+                          </div>
+                      )}
                 </div>
               ))}
             </div>
